@@ -1,0 +1,16 @@
+opam-version: "2.0"
+maintainer: "Antonio Nuno Monteiro <anmonteiro@gmail.com>"
+authors: [ "Antonio Nuno Monteiro <anmonteiro@gmail.com>" ]
+license: "MIT"
+homepage: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws"
+dev-repo: "git+https://github.com/anmonteiro/ocaml-subscriptions-transport-ws.git"
+bug-reports: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws/issues"
+build: [
+  ["jbuilder" "subst" "-p" name] {pinned}
+  ["jbuilder" "build" "-p" name "-j" jobs]
+]
+depends: [
+  "ocaml" { >= "4.03.0" & < "4.08.0"}
+  "dune" {build}
+  "websocket"
+]

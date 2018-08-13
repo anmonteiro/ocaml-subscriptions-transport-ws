@@ -1,0 +1,6 @@
+(library
+ (name subscriptions_transport_ws)
+ (public_name subscriptions-transport-ws)
+ ;  (wrapped false)
+ (libraries httpaf websocket graphql)
+ (flags (:standard -safe-string)))
