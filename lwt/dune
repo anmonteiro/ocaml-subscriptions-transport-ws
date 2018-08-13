@@ -1,0 +1,5 @@
+(library
+ (name subscriptions_transport_ws_lwt)
+ (public_name subscriptions-transport-ws-lwt)
+ (libraries subscriptions-transport-ws lwt)
+ (flags (:standard -safe-string)))

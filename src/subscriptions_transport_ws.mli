@@ -1,4 +1,4 @@
-module type SubscriptionManager = sig
+module type SubscriptionsManager = sig
   type t
 
   val subscriptions : t -> t (* (key * value) list *)
@@ -25,7 +25,7 @@ module type IO = sig
 
   val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
 
-  val bind (* (>>=) *) : 'a t -> ('a -> 'b t) -> 'b t
+  val (>>=) : 'a t -> ('a -> 'b t) -> 'b t
 end
 
 module type Stream = sig
@@ -34,14 +34,14 @@ module type Stream = sig
 
   val consume_stream : 'a t -> ('a -> unit) -> unit io
 
-  val lift_stream_and_destroy : 'a t -> 'a t * (unit -> unit)
+  val stream_destroy_fn : 'a t -> (unit -> unit)
 end
 
 module Make
-    (SubscriptionManager : SubscriptionManager)
     (Io : IO)
-    (Stream : Stream with type 'a io = 'a Io.t) : sig
-  val on_recv : SubscriptionManager.t ->
+    (Stream : Stream with type 'a io = 'a Io.t)
+    (SubscriptionsManager : SubscriptionsManager) : sig
+  val on_recv : SubscriptionsManager.t ->
     ?keepalive:int ->
     subscribe:(variables:Graphql.Schema.variables ->
                ?operation_name:string ->

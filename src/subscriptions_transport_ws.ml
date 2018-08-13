@@ -1,4 +1,4 @@
-module type SubscriptionManager = sig
+module type SubscriptionsManager = sig
   type t
 
   val subscriptions : t -> t (* (key * value) list *)
@@ -25,7 +25,7 @@ module type IO = sig
 
   val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
 
-  val bind (* (>>=) *) : 'a t -> ('a -> 'b t) -> 'b t
+  val (>>=) : 'a t -> ('a -> 'b t) -> 'b t
 end
 
 module type Stream = sig
@@ -34,12 +34,12 @@ module type Stream = sig
 
   val consume_stream : 'a t -> ('a -> unit) -> unit io
 
-  val lift_stream_and_destroy : 'a t -> 'a t * (unit -> unit)
+  val stream_destroy_fn : 'a t -> (unit -> unit)
 end
 
-module Make (SubscriptionManager : SubscriptionManager)
-            (Io : IO)
-            (Stream : Stream with type 'a io = 'a Io.t) = struct
+module Make (Io : IO)
+            (Stream : Stream with type 'a io = 'a Io.t)
+            (SubscriptionsManager : SubscriptionsManager) = struct
   open Websocket
   module Json = Yojson.Basic.Util
 
@@ -107,7 +107,7 @@ module Make (SubscriptionManager : SubscriptionManager)
       (* TODO: check for `graphql-ws` in the request headers, otherwise terminate connection *)
       push_to_websocket (Some (create_message Gql_connection_ack));
     | Gql_start ->
-      (* let open Io in *)
+      let open Io in
       let opId = Json.(json |> member "id" |> to_string) in
       let payload_json = Json.member "payload" json in
       let query = Json.(payload_json |> member "query" |> to_string) in
@@ -123,7 +123,7 @@ module Make (SubscriptionManager : SubscriptionManager)
         ?operation_name
         query
       in
-      let _ = Io.bind result (* >>= *) (function
+      let _ = result >>= (function
           | Error message ->
             let payload = `Assoc ["message", message] in
             push_to_websocket (Some (create_message ~payload ~opId Gql_error));
@@ -131,10 +131,10 @@ module Make (SubscriptionManager : SubscriptionManager)
           | Ok (`Response json) ->
             push_to_websocket (Some (create_message ~opId ~payload:json Gql_data));
             Io.return_unit
-          | Ok (`Stream stream_and_destroy) ->
-            let stream, destroy = Stream.lift_stream_and_destroy stream_and_destroy
+          | Ok (`Stream stream) ->
+            let destroy = Stream.stream_destroy_fn stream
             in
-            SubscriptionManager.add mgr opId destroy;
+            SubscriptionsManager.add mgr opId destroy;
             Io.finalize
               (fun () ->
                 Stream.consume_stream stream
@@ -145,23 +145,23 @@ module Make (SubscriptionManager : SubscriptionManager)
                      * a stream – so if we've been asked to unsubscribe, don't
                      * push the execution result to the websocket.
                      *)
-                    if SubscriptionManager.mem mgr opId then
+                    if SubscriptionsManager.mem mgr opId then
                       push_to_websocket (Some (create_message ~opId ~payload:x Gql_data))))
               (fun () ->
-                 (if SubscriptionManager.mem mgr opId then
+                 (if SubscriptionsManager.mem mgr opId then
                    push_to_websocket (Some (create_message ~opId Gql_complete)));
                    Io.return_unit))
       in ()
     | Gql_stop ->
       let opId = Json.(json |> member "id" |> to_string) in
-      begin match SubscriptionManager.find_opt mgr opId with
+      begin match SubscriptionsManager.find_opt mgr opId with
         | None -> ()
         | Some unsubscribe -> unsubscribe ()
       end;
-      SubscriptionManager.remove mgr opId;
+      SubscriptionsManager.remove mgr opId;
     | Gql_connection_terminate ->
-      SubscriptionManager.iter (fun _ f -> f ()) mgr;
-      SubscriptionManager.clear mgr;
+      SubscriptionsManager.iter (fun _ f -> f ()) mgr;
+      SubscriptionsManager.clear mgr;
       push_to_websocket (Some (create_message ~opcode:Frame.Opcode.Close Gql_connection_error))
     | Invalid ->
       let opId = Json.(json |> member "id" |> to_string) in
