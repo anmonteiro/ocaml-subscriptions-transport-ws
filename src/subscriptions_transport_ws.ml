@@ -42,6 +42,9 @@ module Make (Io : IO)
             (SubscriptionsManager : SubscriptionsManager) = struct
   open Websocket
   module Json = Yojson.Basic.Util
+  type +'a io = 'a Io.t
+  type 'a stream = 'a Stream.t
+  type subscriptions_manager = SubscriptionsManager.t
 
   (* https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md *)
   type client_message =

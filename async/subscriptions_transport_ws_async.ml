@@ -29,4 +29,4 @@ module Stream = struct
 end
 
 module Make (SubscriptionsManager : Subscriptions_transport_ws.SubscriptionsManager) =
-  Subscriptions_transport_ws.Make (Io) (Stream)
+  Subscriptions_transport_ws.Make (Io) (Stream) (SubscriptionsManager)

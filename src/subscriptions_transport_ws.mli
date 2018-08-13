@@ -1,7 +1,7 @@
 module type SubscriptionsManager = sig
   type t
 
-  val subscriptions : t -> t (* (key * value) list *)
+  val subscriptions : t -> t
 
   val add : t -> string -> (unit -> unit) -> unit
 
@@ -40,16 +40,7 @@ end
 module Make
     (Io : IO)
     (Stream : Stream with type 'a io = 'a Io.t)
-    (SubscriptionsManager : SubscriptionsManager) : sig
-  val on_recv : SubscriptionsManager.t ->
-    ?keepalive:int ->
-    subscribe:(variables:Graphql.Schema.variables ->
-               ?operation_name:string ->
-               string ->
-               ([< `Response of Yojson.Basic.json
-                | `Stream of (Yojson.Basic.json, Yojson.Basic.json) result Stream.t ],
-                Yojson.Basic.json) result Io.t) ->
-    push_to_websocket:(Websocket.Frame.t option -> unit) Lazy.t ->
-    Websocket.Frame.t ->
-    unit
-end
+    (SubscriptionsManager : SubscriptionsManager) :
+  Subscriptions_transport_ws_intf.Intf with type 'a io = 'a Io.t
+                                        and type 'a stream = 'a Stream.t
+                                        and type subscriptions_manager = SubscriptionsManager.t

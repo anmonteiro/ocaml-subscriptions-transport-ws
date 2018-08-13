@@ -14,8 +14,11 @@ module Stream = struct
   let stream_destroy_fn (_, destroy) = destroy
 end
 
-
+(*
+ * The following two expressions are actually similar, although this commented
+ * one is probably less clear.
+ *)
+(* module Make = Subscriptions_transport_ws.Make (Lwt) (Stream) *)
 
 module Make (SubscriptionsManager : Subscriptions_transport_ws.SubscriptionsManager) =
-  Subscriptions_transport_ws.Make (Lwt) (Stream)
-
+  Subscriptions_transport_ws.Make (Lwt) (Stream) (SubscriptionsManager)
