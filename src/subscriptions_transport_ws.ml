@@ -18,156 +18,189 @@ module type SubscriptionsManager = sig
   val clear : t -> unit
 end
 
-module type IO = sig
-  type +'a t
+module Json = Yojson.Basic.Util
 
-  val return_unit : unit t
+(* https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md *)
+module Protocol = struct
+  module Client = struct
+    type t =
+      | Gql_connection_init
+      | Gql_start of
+          { id : string
+          ; query : string
+          ; variables : (string * Graphql_parser.const_value) list
+          ; operation_name : string option
+          }
+      | Gql_stop
+      | Gql_connection_terminate
 
-  val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
+    let of_json json =
+      match Json.(to_string (member "type" json)) with
+      | "connection_init" ->
+        Some Gql_connection_init
+      | "start" ->
+        let opId = Json.(json |> member "id" |> to_string) in
+        let payload_json = Json.member "payload" json in
+        let query = Json.(payload_json |> member "query" |> to_string) in
+        let variables =
+          try Json.(payload_json |> member "variables" |> to_assoc) with
+          | _ ->
+            []
+        in
+        let operation_name =
+          Json.(payload_json |> member "operationName" |> to_string_option)
+        in
+        Some
+          (Gql_start
+             { id = opId
+             ; query
+             ; variables =
+                 (variables :> (string * Graphql_parser.const_value) list)
+             ; operation_name
+             })
+      | "stop" ->
+        Some Gql_stop
+      | "connection_terminate" ->
+        Some Gql_connection_terminate
+      | _ | (exception _) ->
+        None
+  end
 
-  val (>>=) : 'a t -> ('a -> 'b t) -> 'b t
-end
+  module Server = struct
+    type t =
+      | Gql_connection_error
+      | Gql_connection_ack
+      | Gql_data
+      | Gql_error
+      | Gql_complete
 
-module type Stream = sig
-  type +'a io
-  type 'a t
-
-  val consume_stream : 'a t -> ('a -> unit) -> unit io
-
-  val stream_destroy_fn : 'a t -> (unit -> unit)
-end
-
-module Make (Io : IO)
-            (Stream : Stream with type 'a io = 'a Io.t)
-            (SubscriptionsManager : SubscriptionsManager) = struct
-  open Websocket
-  module Json = Yojson.Basic.Util
-  type +'a io = 'a Io.t
-  type 'a stream = 'a Stream.t
-  type subscriptions_manager = SubscriptionsManager.t
-
-  (* https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md *)
-  type client_message =
-    | Gql_connection_init
-    | Gql_start
-    | Gql_stop
-    | Gql_connection_terminate
-    (* not part of the protocol, used here to signal invalid messages *)
-    | Invalid
-
-  type server_message =
-    | Gql_connection_error
-    | Gql_connection_ack
-    | Gql_data
-    | Gql_error
-    | Gql_complete
     (* | Gql_connection_keep_alive *)
 
-  let client_message_of_payload payload_json =
-    match payload_json |> (Json.member "type") |> Json.to_string with
-    | "connection_init" -> Gql_connection_init
-    | "start" -> Gql_start
-    | "stop" -> Gql_stop
-    | "connection_terminate" -> Gql_connection_terminate
-    | _ -> Invalid
+    let to_string = function
+      | Gql_connection_error ->
+        "connection_error"
+      | Gql_connection_ack ->
+        "connection_ack"
+      | Gql_data ->
+        "data"
+      | Gql_error ->
+        "error"
+      | Gql_complete ->
+        "complete"
 
-  let server_message_to_string = function
-    | Gql_connection_error -> "connection_error"
-    | Gql_connection_ack -> "connection_ack"
-    | Gql_data -> "data"
-    | Gql_error -> "error"
-    | Gql_complete -> "complete"
-  (* | Gql_connection_keep_alive -> "ka" *)
+    (* | Gql_connection_keep_alive -> "ka" *)
+  end
+end
 
-  (* let rec consume_pipe r cb =
-    Async_kernel.Pipe.read r >>= function
-    | `Ok x ->
-      let Ok x | Error x = x in
-      cb x;
-      consume_pipe r cb
-    | `Eof ->
-      Core.eprintf "EOFY\n%!";
-      Async_kernel.Deferred.unit
- *)
+module Make (SubscriptionsManager : SubscriptionsManager) = struct
+  open Websocketaf
+  module Json = Yojson.Basic.Util
 
-  let create_message ?(opcode=Frame.Opcode.Text) ?opId ?(payload=`Null) typ =
-    let frame_payload = `Assoc [
-        "type", `String (server_message_to_string typ);
-        "id", begin match opId with
-          | Some id -> `String id
-          | None -> `Null end;
-        "payload", payload
-      ] in
+  type subscriptions_manager = SubscriptionsManager.t
+
+  let create_message wsd ?(opcode = `Text) ?id ?(payload = `Null) typ =
+    let open Protocol in
+    let frame_payload =
+      `Assoc
+        [ "type", `String (Server.to_string typ)
+        ; ("id", match id with Some id -> `String id | None -> `Null)
+        ; "payload", payload
+        ]
+    in
     let json = Yojson.Basic.to_string frame_payload in
-    Frame.create ~opcode ~content:json ()
+    Websocketaf.Wsd.send_bytes
+      wsd
+      ~kind:opcode
+      ~off:0
+      ~len:(String.length json)
+      (Bytes.unsafe_of_string json)
 
-  let on_recv mgr ?keepalive:_keepalive ~subscribe ~push_to_websocket frame =
-    let push_to_websocket = Lazy.force push_to_websocket in
-    let json = Yojson.Basic.from_string frame.Frame.content in
-    match client_message_of_payload json with
-    | Gql_connection_init ->
-      (* TODO: allow a user-defined `on_connect` handler *)
-      (* TODO: check for `graphql-ws` in the request headers, otherwise terminate connection *)
-      push_to_websocket (Some (create_message Gql_connection_ack));
-    | Gql_start ->
-      let open Io in
-      let opId = Json.(json |> member "id" |> to_string) in
-      let payload_json = Json.member "payload" json in
-      let query = Json.(payload_json |> member "query" |> to_string) in
-      let variables =
-        try
-          Json.(payload_json |> member "variables" |> to_assoc)
-        with | _ -> [] in
-      let operation_name = Json.(payload_json |> member "operationName" |> to_string_option)
-      in
-      (* TODO: unsubscribe if there's a subscription with the same id *)
-      let result = subscribe
-        ~variables:(variables :> (string * Graphql_parser.const_value) list)
-        ?operation_name
-        query
-      in
-      let _ = result >>= (function
-          | Error message ->
-            let payload = `Assoc ["message", message] in
-            push_to_websocket (Some (create_message ~payload ~opId Gql_error));
-            Io.return_unit
-          | Ok (`Response json) ->
-            push_to_websocket (Some (create_message ~opId ~payload:json Gql_data));
-            Io.return_unit
-          | Ok (`Stream stream) ->
-            let destroy = Stream.stream_destroy_fn stream
-            in
-            SubscriptionsManager.add mgr opId destroy;
-            Io.finalize
-              (fun () ->
-                Stream.consume_stream stream
-                 (fun x ->
-                   let Ok x | Error x = x in
-                    (*
-                     * XXX: OGS doesn't yet have a way of effectively killing
-                     * a stream – so if we've been asked to unsubscribe, don't
-                     * push the execution result to the websocket.
-                     *)
-                    if SubscriptionsManager.mem mgr opId then
-                      push_to_websocket (Some (create_message ~opId ~payload:x Gql_data))))
-              (fun () ->
-                 (if SubscriptionsManager.mem mgr opId then
-                   push_to_websocket (Some (create_message ~opId Gql_complete)));
-                   Io.return_unit))
-      in ()
-    | Gql_stop ->
-      let opId = Json.(json |> member "id" |> to_string) in
-      begin match SubscriptionsManager.find_opt mgr opId with
-        | None -> ()
-        | Some unsubscribe -> unsubscribe ()
-      end;
-      SubscriptionsManager.remove mgr opId;
-    | Gql_connection_terminate ->
-      SubscriptionsManager.iter (fun _ f -> f ()) mgr;
-      SubscriptionsManager.clear mgr;
-      push_to_websocket (Some (create_message ~opcode:Frame.Opcode.Close Gql_connection_error))
-    | Invalid ->
-      let opId = Json.(json |> member "id" |> to_string) in
-      let payload = `Assoc ["message", `String "Invalid message type!"] in
-      push_to_websocket (Some (create_message ~opId ~payload Gql_error));
+  type 'a handlers =
+    { schedule :
+        'a
+        -> on_recv:((Yojson.Basic.t, Yojson.Basic.t) result -> unit)
+        -> on_close:(unit -> unit)
+        -> unit
+    ; destroy : 'a -> unit
+    }
+
+  let on_recv
+      :  subscriptions_manager -> ?keepalive:bool
+      -> subscribe:
+           (variables:Graphql.Schema.variables
+            -> ?operation_name:string
+            -> string
+            -> (( [< `Response of Yojson.Basic.t | `Stream of 'a ]
+                , Yojson.Basic.t )
+                result
+                -> unit)
+            -> unit)
+      -> 'a handlers -> Websocketaf.Wsd.t
+      -> opcode:Websocketaf.Websocket.Opcode.t -> is_fin:bool -> Bigstringaf.t
+      -> off:int -> len:int -> unit
+    =
+   fun mgr ?keepalive:_keepalive ~subscribe handlers ->
+    let open Protocol in
+    let websocket_handler wsd ~opcode ~is_fin:_ bs ~off ~len =
+      match opcode with
+      | `Binary | `Continuation | `Text ->
+        let json =
+          Yojson.Basic.from_string (Bigstringaf.substring bs ~off ~len)
+        in
+        (match Client.of_json json with
+        | None ->
+          let id = Json.(json |> member "id" |> to_string) in
+          let payload = `Assoc [ "message", `String "Invalid message type!" ] in
+          create_message wsd ~id ~payload Server.Gql_error
+        | Some message ->
+          (match message with
+          | Gql_connection_init ->
+            (* TODO: allow a user-defined `on_connect` handler *)
+            (* TODO: check for `graphql-ws` in the request headers, otherwise
+               terminate connection *)
+            create_message wsd Gql_connection_ack
+          | Gql_start { id; query; variables; operation_name } ->
+            (* TODO: unsubscribe if there's a subscription with the same id *)
+            subscribe ~variables ?operation_name query (function
+                | Error message ->
+                  let payload = `Assoc [ "message", message ] in
+                  create_message wsd ~payload ~id Gql_error
+                | Ok (`Response json) ->
+                  create_message wsd ~id ~payload:json Gql_data
+                | Ok (`Stream stream) ->
+                  SubscriptionsManager.add mgr id (fun () ->
+                      handlers.destroy stream);
+                  handlers.schedule
+                    stream
+                    ~on_recv:(fun x ->
+                      let (Ok x | Error x) = x in
+                      (* XXX: OGS doesn't yet have a way of effectively killing
+                       * a stream – so if we've been asked to unsubscribe, don't
+                       * push the execution result to the websocket.
+                       *)
+                      if SubscriptionsManager.mem mgr id then
+                        create_message wsd ~id ~payload:x Gql_data)
+                    ~on_close:(fun () ->
+                      if SubscriptionsManager.mem mgr id then
+                        create_message wsd ~id Gql_complete))
+          | Gql_stop ->
+            let opId = Json.(json |> member "id" |> to_string) in
+            (match SubscriptionsManager.find_opt mgr opId with
+            | None ->
+              ()
+            | Some unsubscribe ->
+              unsubscribe ());
+            SubscriptionsManager.remove mgr opId
+          | Gql_connection_terminate ->
+            SubscriptionsManager.iter (fun _ f -> f ()) mgr;
+            SubscriptionsManager.clear mgr;
+            Wsd.close wsd))
+      | `Connection_close ->
+        Websocketaf.Wsd.close wsd
+      | `Ping ->
+        Websocketaf.Wsd.send_pong wsd
+      | `Pong | `Other _ ->
+        ()
+    in
+    websocket_handler
 end
