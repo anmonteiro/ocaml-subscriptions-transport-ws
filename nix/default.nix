@@ -15,13 +15,8 @@ in
       useDune2 = true;
       src = lib.gitignoreSource ./..;
       propagatedBuildInputs = [
-        # websocketaf
+        websocketaf
         graphql
-
-        bigstringaf
-        faraday
-        angstrom
-        base64
       ];
     };
   }
