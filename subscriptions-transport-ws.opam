@@ -5,6 +5,7 @@ license: "BSD-3-clause"
 homepage: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws"
 dev-repo: "git+https://github.com/anmonteiro/ocaml-subscriptions-transport-ws.git"
 bug-reports: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws/issues"
+doc: "https://anmonteiro.github.io/gluten/"
 build: [
   ["dune" "build" "-p" name "-j" jobs]
 ]
@@ -15,3 +16,10 @@ depends: [
   "graphql_parser"
   "websocketaf"
 ]
+synopsis:
+  "Websocket protocol for exchanging GraphQL requests and responses"
+description: """
+subscriptions-transport-ws implements the Apollo GraphQL protocol
+(https://github.com/apollographql/subscriptions-transport-ws) for exchanging
+GraphQL requests and responses over a websocket connection.
+"""
