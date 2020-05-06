@@ -1,8 +1,6 @@
 module type SubscriptionsManager = sig
   type t
 
-  val subscriptions : t -> t
-
   val add : t -> string -> (unit -> unit) -> unit
 
   val create : int -> t
@@ -18,37 +16,38 @@ module type SubscriptionsManager = sig
   val clear : t -> unit
 end
 
-module Make (SubscriptionsManager : SubscriptionsManager) : sig
-  type subscriptions_manager
+module SubscriptionsManager : sig
+  type 't t
 
-  type 'a handlers =
-    { schedule :
-        'a
-        -> on_recv:((Yojson.Basic.t, Yojson.Basic.t) result -> unit)
-        -> on_close:(unit -> unit)
-        -> unit
-    ; destroy : 'a -> unit
-    }
-
-  val on_recv
-    :  subscriptions_manager
-    -> ?keepalive:bool
-    -> subscribe:
-         (variables:Graphql.Schema.variables
-          -> ?operation_name:string
-          -> string
-          -> (( [< `Response of Yojson.Basic.t | `Stream of 'a ]
-              , Yojson.Basic.t )
-              result
-              -> unit)
-          -> unit)
-    -> 'a handlers
-    -> Websocketaf.Wsd.t
-    -> opcode:Websocketaf.Websocket.Opcode.t
-    -> is_fin:bool
-    -> Bigstringaf.t
-    -> off:int
-    -> len:int
-    -> unit
+  val make : (module SubscriptionsManager with type t = 't) -> 't -> 't t
 end
-with type subscriptions_manager = SubscriptionsManager.t
+
+type 'a handlers =
+  { schedule :
+      'a
+      -> on_recv:((Yojson.Basic.t, Yojson.Basic.t) result -> unit)
+      -> on_close:(unit -> unit)
+      -> unit
+  ; destroy : 'a -> unit
+  }
+
+val on_recv
+  :  't SubscriptionsManager.t
+  -> ?keepalive:bool
+  -> subscribe:
+       (variables:Graphql.Schema.variables
+        -> ?operation_name:string
+        -> string
+        -> (( [< `Response of Yojson.Basic.t | `Stream of 'a ]
+            , Yojson.Basic.t )
+            result
+            -> unit)
+        -> unit)
+  -> 'a handlers
+  -> Websocketaf.Wsd.t
+  -> opcode:Websocketaf.Websocket.Opcode.t
+  -> is_fin:bool
+  -> Bigstringaf.t
+  -> off:int
+  -> len:int
+  -> unit
