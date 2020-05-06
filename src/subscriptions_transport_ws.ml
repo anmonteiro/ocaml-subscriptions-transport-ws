@@ -94,7 +94,9 @@ module Protocol = struct
         Some (Gql_stop opId)
       | "connection_terminate" ->
         Some Gql_connection_terminate
-      | _ | (exception _) ->
+      | _ ->
+        None
+      | exception _ ->
         None
   end
 
