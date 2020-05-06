@@ -1,5 +1,0 @@
-(library
- (name subscriptions_transport_ws_async)
- (public_name subscriptions-transport-ws-async)
- (libraries subscriptions-transport-ws async_kernel)
- (flags (:standard -safe-string)))

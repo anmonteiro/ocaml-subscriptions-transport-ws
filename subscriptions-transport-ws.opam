@@ -6,12 +6,11 @@ homepage: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws"
 dev-repo: "git+https://github.com/anmonteiro/ocaml-subscriptions-transport-ws.git"
 bug-reports: "https://github.com/anmonteiro/ocaml-subscriptions-transport-ws/issues"
 build: [
-  ["jbuilder" "subst" "-p" name] {pinned}
-  ["jbuilder" "build" "-p" name "-j" jobs]
+  ["dune" "build" "-p" name "-j" jobs]
 ]
 depends: [
-  "ocaml" { >= "4.03.0" & < "4.08.0"}
-  "dune" {build}
+  "ocaml" { >= "4.03.0" }
+  "dune"
   "graphql"
-  "websocket"
+  "websocketaf"
 ]
