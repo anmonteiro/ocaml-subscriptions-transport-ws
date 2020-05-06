@@ -33,7 +33,6 @@ type 'a handlers =
 
 val on_recv
   :  't SubscriptionsManager.t
-  -> ?keepalive:bool
   -> subscribe:
        (variables:Graphql.Schema.variables
         -> ?operation_name:string

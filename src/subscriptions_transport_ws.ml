@@ -30,7 +30,7 @@ module Protocol = struct
           ; variables : (string * Graphql_parser.const_value) list
           ; operation_name : string option
           }
-      | Gql_stop
+      | Gql_stop of string
       | Gql_connection_terminate
 
     let of_json json =
@@ -58,7 +58,8 @@ module Protocol = struct
              ; operation_name
              })
       | "stop" ->
-        Some Gql_stop
+        let opId = Json.(json |> member "id" |> to_string) in
+        Some (Gql_stop opId)
       | "connection_terminate" ->
         Some Gql_connection_terminate
       | _ | (exception _) ->
@@ -67,7 +68,7 @@ module Protocol = struct
 
   module Server = struct
     type t =
-      | Gql_connection_error
+      (* | Gql_connection_error *)
       | Gql_connection_ack
       | Gql_data
       | Gql_error
@@ -76,8 +77,8 @@ module Protocol = struct
     (* | Gql_connection_keep_alive *)
 
     let to_string = function
-      | Gql_connection_error ->
-        "connection_error"
+      (* | Gql_connection_error -> *)
+      (* "connection_error" *)
       | Gql_connection_ack ->
         "connection_ack"
       | Gql_data ->
@@ -126,7 +127,6 @@ let create_message wsd ?(opcode = `Text) ?id ?(payload = `Null) typ =
 let on_recv
     : type t.
       t SubscriptionsManager.t
-      -> ?keepalive:bool
       -> subscribe:
            (variables:Graphql.Schema.variables
             -> ?operation_name:string
@@ -145,7 +145,7 @@ let on_recv
       -> len:int
       -> unit
   =
- fun ((module Subscriptions), t) ?keepalive:_keepalive ~subscribe handlers ->
+ fun ((module Subscriptions), t) ~subscribe handlers ->
   let open Protocol in
   let websocket_handler wsd ~opcode ~is_fin:_ bs ~off ~len =
     match opcode with
@@ -155,9 +155,9 @@ let on_recv
       in
       (match Client.of_json json with
       | None ->
-        let id = Json.(json |> member "id" |> to_string) in
+        let id = Json.(json |> member "id" |> to_string_option) in
         let payload = `Assoc [ "message", `String "Invalid message type!" ] in
-        create_message wsd ~id ~payload Server.Gql_error
+        create_message wsd ?id ~payload Server.Gql_error
       | Some message ->
         (match message with
         | Gql_connection_init ->
@@ -188,14 +188,13 @@ let on_recv
                   ~on_close:(fun () ->
                     if Subscriptions.mem t id then
                       create_message wsd ~id Gql_complete))
-        | Gql_stop ->
-          let opId = Json.(json |> member "id" |> to_string) in
-          (match Subscriptions.find_opt t opId with
+        | Gql_stop id ->
+          (match Subscriptions.find_opt t id with
           | None ->
             ()
           | Some unsubscribe ->
-            unsubscribe ());
-          Subscriptions.remove t opId
+            unsubscribe ();
+            Subscriptions.remove t id)
         | Gql_connection_terminate ->
           Subscriptions.iter (fun _ f -> f ()) t;
           Subscriptions.clear t;
