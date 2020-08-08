@@ -13,7 +13,11 @@ in
       pname = "subscriptions-transport-ws";
       version = "0.0.1-dev";
       useDune2 = true;
-      src = lib.gitignoreSource ./..;
+      src = lib.filterGitSource {
+        src = ./..;
+        dirs = [ "src" ];
+        files = [ "dune-project" "subscriptions-transport-ws.opam" ];
+      };
       propagatedBuildInputs = [
         websocketaf
         graphql
